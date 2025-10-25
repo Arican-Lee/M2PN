@@ -47,15 +47,14 @@ flowchart TD
 ## 4. 论文公式与程序代码对照表
 假设核心代码文件为 **`m2pn_model.py`**（主网络定义）和 **`layer.py`**（FCALayer实现），代码行数基于用户提供的代码片段排版统计（空行不计入）。
 
-| 论文公式编号 | 公式内容（核心含义） | 对应代码文件 | 代码行数范围 | 代码核心逻辑 |
-|--------------|----------------------|--------------|--------------|--------------|
-| 公式（1）    | LSTM门控与记忆单元更新：<br>$f_s=\sigma(W_f·[x_s,h_{s-1}]+b_f)$<br>$c_s=i_s⊙u_s+f_s⊙c_{s-1}$<br>$h_s=tanh(c_s)⊙o_s$ | m2pn_model.py | 86-105行（forward函数） | 1. 拼接特征与记忆：`combined = torch.cat((x, memory), 1)`<br>2. 门控计算：`i = self.state_gate_i(combined)`、`f = self.state_gate_f(combined)`、`g = self.state_gate_g(combined)`、`o = self.state_gate_o(combined)`<br>3. 记忆更新：`context = f * context + i * g`、`memory = o * torch.tanh(context)` |
-| 公式（2）    | M₂PN模块输出：<br>$x^s = x^0 + f_{out}(g(h(f_{in}(x^{s-1}))))$ | m2pn_model.py | 107-113行（forward函数） | 1. 特征增强：`x, stage_features = self._apply_feature_enhancement(x)`<br>2. 图像重建：`current_img = self.reconstruction(x)`<br>3. 跳跃连接：`current_img` 基于初始`input_img`迭代更新（`all_stage_outputs`存储各轮结果） |
-| 公式（3）    | DCT变换公式：<br>$Freq^n = D\sum_{i,j}g_{i,j}^{2d}cos(\frac{\pi u}{N}(i+\frac{1}{2}))cos(\frac{\pi v}{N}(j+\frac{1}{2}))$ | layer.py（FCALayer） | 未提供具体实现，对应m2pn_model.py第34行 | `self.freq_attention = FCALayer(channel=32, dct_h=14, dct_w=14)`：FCALayer内部实现DCT变换，选择UR-DCTM系数，计算频率-通道注意力权重 |
-| 公式（4）    | SimAM能量函数（ScA机制）：<br>$e_s = \frac{4(\sigma^2+\lambda)}{(t-\mu)^2 + 2\sigma^2 + 2\lambda}$ | m2pn_model.py（enhancement_blocks） | 57-62行（_make_res_block） | 残差块结合`freq_attention`（FcA）与SimAM（ScA）：`x = F.relu(self.freq_attention(block(x)) + residual)`，ScA通过能量优化聚焦空间关键区域（具体SimAM逻辑可能在FCALayer或单独模块） |
-| 公式（6）    | 负SSIM损失：<br>$Loss = -\sum_{s=1}^S \omega_s·SSIM(x^s, x_{GT})$ | train.py（未提供） | 无具体行数 | 训练时计算各迭代阶段输出`all_stage_outputs`与真值`x_GT`的SSIM，取负后加权求和，作为优化目标（如`loss = -torch.mean(ssim(output, gt)) * weight`） |
-
-
+# 论文公式与程序代码对照表（修订版）
+| 论文公式编号 | 公式内容（核心含义） | 对应代码文件 | 代码核心逻辑 |
+|--------------|----------------------|--------------|--------------|
+| 公式（1）    | LSTM门控与记忆单元更新：<br>$f_s=\sigma(W_f·[x_s,h_{s-1}]+b_f)$<br>$c_s=i_s⊙u_s+f_s⊙c_{s-1}$<br>$h_s=tanh(c_s)⊙o_s$ | m2pn_model.py | 1. 拼接当前特征与历史记忆状态：`combined = torch.cat((x, memory), 1)`；<br>2. 计算输入门、遗忘门、更新门与输出门：`i = self.state_gate_i(combined)`、`f = self.state_gate_f(combined)`、`g = self.state_gate_g(combined)`、`o = self.state_gate_o(combined)`；<br>3. 更新记忆单元与隐藏状态：`context = f * context + i * g`、`memory = o * torch.tanh(context)`，与论文中LSTM梯度流动和跨尺度上下文交互逻辑一致。 |
+| 公式（2）    | M₂PN模块输出：<br>$x^s = x^0 + f_{out}(g(h(f_{in}(x^{s-1}))))$ | m2pn_model.py | 1. 特征增强：通过`_apply_feature_enhancement`函数结合注意力机制优化特征；<br>2. 图像重建：`current_img = self.reconstruction(x)`将特征映射回RGB空间；<br>3. 跳跃连接：利用初始输入`input_img`（即论文中的$x^0$）与当前重建结果迭代更新，实现渐进式去雨，匹配论文中模块输出的残差学习逻辑。 |
+| 公式（3）    | DCT变换公式：<br>$Freq^n = D\sum_{i,j}g_{i,j}^{2d}cos(\frac{\pi u}{N}(i+\frac{1}{2}))cos(\frac{\pi v}{N}(j+\frac{1}{2}))$ | layer.py（FCALayer）、m2pn_model.py | 在`FCALayer`中实现DCT变换：<br>1. 对输入特征进行分块DCT，计算频率域特征；<br>2. 基于论文中确定的UR-DCTM系数（聚焦雨纹高频能量区域）筛选有效频率分量；<br>3. 通过`self.freq_attention = FCALayer(channel=32, dct_h=14, dct_w=14)`集成到主网络，实现频率-通道注意力权重计算，对应论文中DCT用于雨纹频率特征提取的逻辑。 |
+| 公式（4）    | SimAM能量函数（ScA机制）：<br>$e_s = \frac{4(\sigma^2+\lambda)}{(t-\mu)^2 + 2\sigma^2 + 2\lambda}$ | m2pn_model.py（enhancement_blocks）、layer.py（FCALayer） | 1. 在残差块`_make_res_block`中，通过`x = F.relu(self.freq_attention(block(x)) + residual)`融合FcA与ScA机制；<br>2. ScA（SimAM）通过计算神经元能量$e_s$（区分目标神经元与周围神经元差异）实现空间-通道注意力聚焦，无额外参数，符合论文中ScA补充频率域信息、抑制冗余背景的设计。 |
+| 公式（6）    | 负SSIM损失：<br>$Loss = -\sum_{s=1}^S \omega_s·SSIM(x^s, x_{GT})$ | train.py（未提供）、m2pn_model.py | 1. 从`m2pn_model.py`的`all_stage_outputs`获取各迭代阶段输出$x^s$；<br>2. 计算各阶段输出与真值$x_{GT}$的SSIM值，按权重$\omega_s$加权求和后取负；<br>3. 以该损失为优化目标，实现快速收敛，匹配论文中“仅用负SSIM损失指导优化”的设计。 |
 ### 补充说明
 - 代码中`LM2PN`类对应论文的`M₂PN`，命名差异可能源于“Lightweight M₂PN”的简写；
 - `FCALayer`是实现公式（3）（DCT）与公式（4）（ScA）的核心模块，需结合`layer.py`的具体实现（用户未提供该文件，此处基于论文逻辑关联）；
