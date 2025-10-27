@@ -42,6 +42,6 @@ We achieved state-of-the-art performance for Single Image Deraining. Detailed re
 <details>
 <summary>Classical Image Super-Resolution (click me)</summary>
 <p align="center">
-  <img width="900" src="figs/result.jpg">
+  <img width="900" src="figs/results.jpg">
 </p>
   
