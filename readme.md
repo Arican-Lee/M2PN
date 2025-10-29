@@ -1,5 +1,5 @@
 请查看详细内容：[docs/report.md](docs/report.md)
-# M2PN:A Lightweight Multi-domain Multi-attention Progressive Network for Single Image Deraining
+# M2PN:基于一种轻量级多域多注意力渐进式网络的单图去雨模型
 [Junliu Zhong](), [Zhiyi Li](), [Dan Xiang](), [Maotang Han]() ,[Changsheng Li](), [Yanfen Gan]()
 
 This repository is the official PyTorch implementation of M2PN: Image Restoration Using Shifted Window Transformer
