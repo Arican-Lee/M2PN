@@ -44,7 +44,7 @@
 
 ```
 
-<img src="Lightweight M2PN structure.jpg" width="300" alt="总体结构">
+<img src="Lightweight M2PN structure.jpg" width="1552" alt="总体结构">
 
 # 2. 论文公式与程序代码对照表
 
