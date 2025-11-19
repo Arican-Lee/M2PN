@@ -1,48 +1,60 @@
 # 1、论文总结
-## 1.1 研究面临的核心问题（现有方法局限性）
-现有单幅图像去雨的方法存在三大核心矛盾，制约了性能、效率与轻量化的平衡：
+## 1.1 研究背景
+单图像去雨的核心目标是移除图像中的雨纹信息，恢复图像清晰度与原始质量，是计算机视觉领域的热门方向，但仍面临诸多挑战。
 
-(1)、**域处理单一性局限**：多数方法仅在空间域处理图像，忽略雨纹在频率域的特征（如雨纹高频能量分布与下落方向的关联），导致雨纹与背景细节区分不足，易丢失纹理或边缘。
+**(1)、现有方法的固有局限**
+   - 仅依赖空间域处理，难以充分捕捉雨丝的特征，限制去雨性能提升。
+   - 网络结构日趋复杂，GAN、CNN、Transformer 类去雨模型均存在缺陷：GAN 收敛困难、易产生伪影；CNN 感受野有限、上下文建模能力弱；Transformer 局部信息处理不足、参数呈二次增长。
 
-(2)、**网络复杂度与效率失衡**：
-   - GAN类方法（如DCD-GAN）需交替训练生成器与判别器，收敛困难且计算成本高；
-   - CNN类方法（如RLNet）依赖深层通道与多样卷积核，参数激增（通常百万级）；
-   - Transformer类方法（如SwinIR）需计算全像素 pairwise 关系，参数随图像尺寸平方增长，难以适配实时/IoT场景。
-
-(3)、**频率域方法缺陷**：少数尝试频率域的方法（如小波变换）存在局部分析能力弱、难确定截止频率、忽略雨纹形态特征的问题，且多为非端到端设计，参数调优困难。
-
-
-## 1.2 解决问题的创新点（M₂PN核心设计）
-论文提出**轻量化多域多注意力渐进式网络（M₂PN）**，通过三方面创新实现“高性能-高效率-轻量化”平衡：
-1. **多域注意力机制设计**：
-   - **频率-通道注意力（FcA）**：基于离散余弦变换（DCT）理论，分析雨纹“近似垂直下落+细长形态”与频谱带宽的关联，确定DCT矩阵右上角区域（UR-DCTM）为雨纹高频能量集中区，通过UR-DCTM滤波分解/重组频率能量，精准捕捉雨纹频率特征，补充空间域信息；
-   - **空间-通道注意力（ScA）**：基于能量函数快速闭式解（SimAM模块），无额外参数，融合空间-通道域信息，进一步抑制冗余背景、聚焦雨纹细节。
-2. **渐进式递归骨干结构**：
-   - 采用6个相同递归M₂PN模块，模块间通过跳跃连接传递梯度与上下文信息，实现“低-高尺度特征”逐步提取；
-   - 每个模块包含1×1卷积（浅层特征提取）、LSTM（跨尺度上下文交互）、M₂PN块组（FcA+ScA特征融合）、3×3 ShiftAddNet卷积（轻量化特征重建），加速收敛（仅需100轮训练）。
-3. **极致轻量化实现**：
-   - 采用浅层通道（最大32通道）、少卷积核（仅30个1×1卷积），替换传统3×3卷积为轻量化ShiftAddNet卷积；
-   - FcA与ScA几乎无额外参数，最终网络仅168K参数，较现有SOTA方法（如SwinIR的11.8M、MFDNet的4.74M）低1-2个数量级。
+**(2)、关键痛点**
+   - 参数规模大：SOTA 模型参数多在百万级以上，不利于实时应用与物联网场景。
+   - 效率低下：训练周期长（部分模型需数千轮迭代）、测试速度慢，难以满足实际需求。
+   - 性能瓶颈：易丢失图像细节纹理，复杂雨景（如大雨、斜向雨）下去雨效果不佳。
 
 
-### 1.3 M₂PN方法流程图
+## 1.2 研究面临的核心问题（相关工作）
+现有去雨研究主要围绕 “空间 - 通道域”“频率域”“轻量化” 三个方向展开，各有进展与不足：
 
-```
-    A[输入：RGB雨图x⁰（H×W×3）] --> B[图像拼接：x⁰与当前迭代输出x^(s-1)拼接为x_in^(s-1)（H×W×6）]
-    B --> C[浅层特征提取：1×1卷积 → f_in(x_in^(s-1))（H×W×32）]
-    C --> D[LSTM上下文交互：输入x_s = f_in ⊗ h_(s-1)，更新门控（i_s/f_s/g_s/o_s）与记忆单元（c_s/h_s）]
-    D --> E[M₂PN块组（q=5个块）：多域特征融合]
-    E --> E1[第一步：3×3卷积增强雨纹纹理特征]
-    E1 --> E2[第二步：自适应GAP分割通道为n=16个子模型]
-    E2 --> E3[第三步：FcA机制：UR-DCTM滤波→频率权重向量→通道加权（Sigmoid激活）]
-    E3 --> E4[第四步：ScA机制（SimAM）：空间-通道能量优化→无参数特征聚焦]
-    E4 --> F[特征重建：ShiftAddNet 3×3卷积 → 恢复RGB图像x^s（H×W×3）]
-    F --> G[跳跃连接：x^s = x⁰ + 重建特征（残差学习）]
-    G --> H{是否达到迭代次数S=6？}
-    H -- 否 --> B[进入下一轮迭代（s=s+1）]
-    H -- 是 --> I[输出最终去雨结果x⁶]
+(1)、**空间与通道域学习**：
+   - 核心思路：通过 CNN 或 Transformer 提取空间 / 通道特征，利用多尺度、递归、编码器 - 解码器等结构实现粗到精去雨。
+   - 代表性方法：JORDER 系列[10,11]（递归架构）、RLNet[16-18]（金字塔网络）、SwinIR[27]（Swin-Transformer 骨干）、SPANet[23]（引入空间注意力）。
+   - 不足：CNN 类方法易丢失纹理细节，Transformer 类方法局部特征提取能力弱，且参数与计算成本高。
 
-```
+(2)、**频率域学习**：
+   - 核心思路：将图像转换至频率域（小波变换、DCT），利用雨丝与背景在频率分布上的差异实现去雨。
+   - 代表性方法：RWL[38]（递归小波学习）、WCAM[40]（小波通道注意力）、MDARNet[41]（层级单演小波变换）、WAAR[42]（平稳小波变换）。
+   - 不足：现有方法多为非端到端设计，参数调优困难；仅采用固定带宽分解，难以适配复杂雨景；缺乏对雨丝方向与形态的针对性频率分析。
+
+(3)、**轻量化学习**：
+   - 核心需求：降低模型复杂度，适配实时与边缘设备场景。
+   - 现有尝试：采用空洞卷积（Dilated Convolution）[45]、深度可分离卷积（DWS-Conv）[46]、ShiftAddNet[37] 等轻量化卷积结构，但未在去雨领域充分应用。
+   - 不足：深度可分离卷积缺乏通道间信息交互，空洞卷积对像素级密集预测效果有限，现有轻量化模型仍难以平衡性能与效率。
+
+
+## 1.3 解决问题的贡献点
+论文围绕单图像去雨任务的 “性能提升、效率优化、轻量化设计” 三大核心目标，提出轻量化多域多注意力渐进网络（** $M_{2}PN$**），主要贡献可分为**理论分析与注意力机制创新、渐进式网络结构设计、极致轻量化与高效性能平衡**三大维度，具体如下：
+### (一)、理论分析与注意力机制创新：多域特征融合提升去雨精度
+(1)、**揭示雨丝特性与 DCT 频谱的关联，提出频率通道注意力（FcA）机制**
+   - 论文通过离散余弦变换（DCT）对雨丝的频率能量分布进行理论分析，首次明确雨纹 “近似垂直下落” 或 “轻微偏离垂直” 的形态特征与 DCT 频谱带宽的对应关系 —— 垂直雨丝的高频能量集中于 DCT 矩阵的水平 v 轴，斜向雨丝的能量分布方向与下落角度 θ 一致，且这些能量主要集中于 DCT 矩阵的右上区域（UR-DCTM）。
+   - 基于此，设计 FcA 机制：将图像 DCT 频谱分解为 16 个关键带宽（UR-DCTM 系数），通过频率向量与特征图的逐元素加权，精准捕捉雨丝的频率信息，补充空间域特征的不足，有效区分雨丝与背景细节，解决了传统方法 “仅依赖空间域导致雨丝误判” 的问题。
+(2)、**提出参数无关的空间通道注意力（ScA）机制，优化多域特征融合**
+   - 受能量函数优化理论启发，引入 SimAM 模块的快速闭式解（无需额外参数），设计 3D 空间 - 通道注意力（ScA）：通过计算神经元能量差异（公式 $e_{s}=\frac{4(\sigma^{2}+\lambda)}{(t-\mu)^{2}+2\sigma^{2}+2\lambda}$），抑制空间冗余信息、强化雨丝区域的空间 - 通道关联，实现 “频率 - 空间 - 通道” 多域特征的高效融合。
+   - 该机制无需额外参数，却能进一步提升雨丝识别精度，与 FcA 协同作用，显著改善复杂雨景（如斜向雨、密集雨）的去雨效果。
+### (二)、渐进式递归网络结构：兼顾特征捕捉与训练效率
+(1)、**设计带跳跃连接的递归渐进结构，优化梯度流动与特征层级 $M_{2}PN$**
+   - 骨干网络由 6 个（S=6）相同的递归 ** $M_{2}PN$** 模块组成，每个模块通过跳跃连接（将初始雨图与前一模块输出拼接）实现 “低 - 高尺度” 特征的逐步传递与细化。这种结构不仅解决了深层网络的梯度消失问题，还能高效捕捉雨丝从 “粗粒度去除” 到 “细粒度修复” 的渐进式特征，提升上下文信息获取能力，弥补了传统 CNN “感受野有限”、Transformer “局部信息弱” 的缺陷。
+
+(2)、**简化训练流程，实现快速收敛**
+   - 网络仅采用 “负 SSIM 损失”（公式 $L=-\sum_{s=1}^{S=6}\omega_{s}SSIM(x^{s},x_{GT})$）作为优化目标，无需复杂损失函数组合；同时，递归结构与多注意力机制的协同作用，使网络仅需 100 轮训练即可收敛（远少于 SOTA 模型如 EfficientDeRain 的 10000 轮、SwinIR 的 1200 轮），大幅降低训练成本。
+### (三)、极致轻量化设计：168K 参数实现 SOTA 级性能
+(1)、**极简网络组件，参数规模降低 1-2 个数量级 $M_{2}PN$**
+   - 通过三大策略实现轻量化：① 采用浅通道设计，网络最大通道数仅 32；② 替换传统重卷积：用 ShiftAddNet 的 $Conv_{(3×3)}$（低计算成本）替代传统卷积，仅保留 30 个 $Conv_{(1×1)}$处理细节；③ 注意力机制参数无关：FcA 仅需 128 个额外参数，ScA 完全无参数。最终网络总参数仅 168K，较 SOTA 模型（如 SwinIR 11.8M、MFDNet 4.741M）降低 1-2 个数量级，适配实时应用与物联网（IoT）场景。
+(2)、**轻量化与高性能的平衡：多数据集验证最优综合表现**
+   - 在 Rain100L、Rain100H、Rain200L 等 5 个基准数据集上， $M_{2}PN$ 实现 “参数最少 + 性能优异 + 效率最高” 的三重优势：① 性能：Rain100L 数据集上 PSNR 达 38.36dB、SSIM 达 0.985，位列 SOTA 前三；② 效率：处理 512×512 图像仅需 0.11s，快于 SwinIR（0.81s）、TRNR（0.5s）；③ 综合排名：在 “性能（PSNR/SSIM）+ 效率（训练轮次）+ 轻量化（参数）” 的综合评分中，超越 TRNR、MFDNet 等 SOTA 模型，成为单图像去雨任务的高效轻量化解决方案。
+
+
+### 1.4 M₂PN方法流程图
+
 
 <img src="Lightweight M2PN structure.jpg" width="1552" alt="总体结构">
 
@@ -61,7 +73,7 @@
 
 # 3 训练
 ## 3.1 训练流程
-为了提升训练效率、简化数据处理流程、优化内存利用，将数据集中所有图像转为H5格式：
+**为了提升训练效率、简化数据处理流程、优化内存利用，将数据集中所有图像转为H5格式：**
 ```
 def prepare_data_RainTrainL(data_path, patch_size, stride):
     # train
@@ -115,108 +127,185 @@ def prepare_data_RainTrainL(data_path, patch_size, stride):
 
     print('training set, # samples %d\n' % train_num)
 ```
-以上代码就是将Rain100L数据集转为H5格式的代码。
+**以上代码就是将Rain100L数据集转为H5格式的代码。**
 
-主要的训练代码：
+**主要的训练代码：**
 
 ```
 def main():
-
+    # -------------------------- 1. 加载训练数据集 --------------------------
     print('Loading dataset ...\n')
+    # 初始化训练数据集（opt.data_path为配置的数据集路径）
     dataset_train = Dataset(data_path=opt.data_path)
-    loader_train = DataLoader(dataset=dataset_train, num_workers=4, batch_size=opt.batch_size, shuffle=True, pin_memory=True)
+    # 构建数据加载器：num_workers=4（4个线程加载数据）、batch_size=配置值、打乱数据、内存锁定加速
+    loader_train = DataLoader(
+        dataset=dataset_train, 
+        num_workers=4, 
+        batch_size=opt.batch_size, 
+        shuffle=True, 
+        pin_memory=True
+    )
+    # 打印训练样本总数
     print("# of training samples: %d\n" % int(len(dataset_train)))
 
-    # Build model
-    model = FCADRN(recurrent_iter=opt.recurrent_iter, use_GPU=opt.use_gpu)
+    # -------------------------- 2. 构建模型并统计参数 --------------------------
+    # 构建模型：选择双向M₂PN（biM2PN），recurrent_iter=配置的递归迭代次数（论文中S=6），use_GPU=是否用GPU
+    # （注释掉的M2PN、LM2PN为其他变体，可根据实验需求切换）
+    # model = M2PN(recurrent_iter=opt.recurrent_iter, use_GPU=opt.use_gpu)
+    # model = LM2PN(recurrent_iter=opt.recurrent_iter, use_GPU=opt.use_gpu)
+    model = biM2PN(recurrent_iter=opt.recurrent_iter, use_GPU=opt.use_gpu)
+    # 打印网络结构详情（自定义工具函数，如层名称、输出维度等）
     print_network(model)
+    # 统计模型总参数量（论文中M₂PN参数量为168K，此处用于验证）
+    num_params = 0
+    for param in model.parameters():
+        num_params += param.numel()  # 累加每个参数的元素数量
+    # 打印模型保存路径和总参数量
+    print('MODEL SAVE AT {}'.format(opt.save_path))
+    print('Total number of parameters: %d' % num_params)
 
-    # loss function
+    # -------------------------- 3. 定义损失函数 --------------------------
+    # 选择损失函数：论文中用负SSIM损失（因SSIM越大表示图像越相似，最小化负SSIM等价于最大化SSIM）
+    # （注释掉的MSELoss为均方误差损失，是备选方案）
     # criterion = nn.MSELoss(size_average=False)
-    criterion = SSIM()
+    criterion = SSIM()  # 自定义SSIM计算类（需返回单个数值损失）
 
-    # Move to GPU
-    if opt.use_gpu:
-        model = model.cuda()
-        criterion.cuda()
 
-    # Optimizer
+    # -------------------------- 4. 配置GPU环境 --------------------------
+    if opt.use_gpu and torch.cuda.is_available():  # 若配置使用GPU且设备支持
+        model = model.cuda()  # 模型移至GPU
+        criterion = criterion.cuda()  # 损失函数移至GPU（若含可训练参数）
+
+    # -------------------------- 5. 配置优化器与学习率调度 --------------------------
+    # 优化器：Adam优化器，学习率=配置值（论文中初始lr=4e-4）
     optimizer = optim.Adam(model.parameters(), lr=opt.lr)
-    scheduler = MultiStepLR(optimizer, milestones=opt.milestone, gamma=0.2)  # learning rates milestone=[30,50,80]
+    # 学习率调度：MultiStepLR（多步衰减），milestones=衰减节点（论文中为[30,50,80]），gamma=衰减系数（0.2）
+    scheduler = MultiStepLR(optimizer, milestones=opt.milestone, gamma=0.2)
 
-    # record training
+    # -------------------------- 6. 初始化训练日志（TensorBoard） --------------------------
+    # SummaryWriter：用于记录训练过程中的标量（损失、PSNR等）和图像（雨图、去雨图等）
     writer = SummaryWriter(opt.save_path)
 
-    # load the lastest model
+    # -------------------------- 7. 断点续训（加载最近保存的模型） --------------------------
+    # findLastCheckpoint：自定义函数，查找保存目录下最近一次训练的epoch
     initial_epoch = findLastCheckpoint(save_dir=opt.save_path)
-    if initial_epoch > 0:
+    if initial_epoch > 0:  # 若存在历史训练记录
         print('resuming by loading epoch %d' % initial_epoch)
-        model.load_state_dict(torch.load(os.path.join(opt.save_path, 'net_epoch%d.pth' % initial_epoch)), False)
+        # 加载checkpoint文件（含模型参数、优化器状态、调度器状态）
+        checkpoint = torch.load(os.path.join(opt.save_path, 'net_epoch%d.pth' % initial_epoch))
+        model.load_state_dict(checkpoint['state_dict'])  # 加载模型参数
+        optimizer.load_state_dict(checkpoint['optimizer'])  # 加载优化器参数（保证学习率连续性）
+        scheduler.load_state_dict(checkpoint['scheduler'])  # 加载调度器参数
+        initial_epoch = checkpoint['epoch']  # 恢复起始epoch
 
-    # start training
-    workbook = Workbook()
-    worksheet = workbook.active#用于打开工作簿让后面训练数据保存
-
-    step = 0
+    # -------------------------- 8. 开始训练循环 --------------------------
+    step = 0  # 记录训练总步数（用于TensorBoard日志）
+    # 外层循环：遍历epoch（从初始epoch到配置的总epoch数）
     for epoch in range(initial_epoch, opt.epochs):
+        # 初始化当前epoch的SSIM和PSNR列表（用于计算 epoch 平均指标）
+        SSIM_list = []
+        psnr_list = []
+        # 更新学习率调度器（需传入当前epoch，确保衰减时机正确）
         scheduler.step(epoch)
+        # 打印当前epoch的学习率
         for param_group in optimizer.param_groups:
             print('learning rate %f' % param_group["lr"])
 
-        ## epoch training start
+        ## -------------------------- 8.1 单epoch训练（遍历所有batch） --------------------------
         for i, (input_train, target_train) in enumerate(loader_train, 0):
+            # 1. 模型切换为训练模式（启用Dropout、BatchNorm更新等）
             model.train()
+            # 2. 清零模型梯度和优化器梯度（避免梯度累积）
             model.zero_grad()
             optimizer.zero_grad()
 
+            # 3. 数据转换为Variable（兼容PyTorch旧版本，新版本可省略）
             input_train, target_train = Variable(input_train), Variable(target_train)
-
+            # 4. 数据移至GPU（若使用）
             if opt.use_gpu:
                 input_train, target_train = input_train.cuda(), target_train.cuda()
 
+            # 5. 模型前向传播：输入雨图，输出去雨图（_为其他返回值，如中间迭代结果）
             out_train, _ = model(input_train)
-            pixel_metric = criterion(target_train, out_train)
-            loss = -pixel_metric
+            # 6. 计算损失：论文中用负SSIM作为损失（criterion返回SSIM值，取负后最小化）
+            pixel_metric = criterion(target_train, out_train)  # pixel_metric为SSIM值
+            loss = -pixel_metric  # 负SSIM损失
 
-            loss.backward()
-            optimizer.step()
+            # 7. 反向传播与参数更新
+            loss.backward()  # 计算梯度
+            optimizer.step()  # 更新模型参数
 
-            # training curve
+            # 8. 计算当前batch的评估指标（PSNR、SSIM）—— 模型切换为评估模式（禁用Dropout等）
             model.eval()
-            out_train, _ = model(input_train)
-            out_train = torch.clamp(out_train, 0., 1.)
-            psnr_train = batch_PSNR(out_train, target_train, 1.)
-            data_row = [step, epoch, loss.item(), pixel_metric.item(), psnr_train]
-            worksheet.append(data_row)#保存一次训练数据
+            with torch.no_grad():  # 禁用梯度计算，加速推理
+                out_train, _ = model(input_train)
+                out_train = torch.clamp(out_train, 0., 1.)  # 限制输出在[0,1]（图像像素值范围）
+                # 计算batch级PSNR（自定义函数，输入去雨图、干净图、最大像素值1.0）
+                psnr_train = batch_PSNR(out_train, target_train, 1.)
+
+            # 9. 记录当前batch的指标
+            SSIM_list.append(pixel_metric.item())  # 保存SSIM值（转为Python数值）
+            psnr_list.append(psnr_train)  # 保存PSNR值
+            # 打印当前batch的训练信息：epoch、batch序号、损失、SSIM、PSNR
             print("[epoch %d][%d/%d] loss: %.4f, SSIM: %.4f, PSNR: %.4f" %
                   (epoch+1, i+1, len(loader_train), loss.item(), pixel_metric.item(), psnr_train))
 
-
+            # 10. 每10步记录日志到TensorBoard
             if step % 10 == 0:
-                # Log the scalar values
-                writer.add_scalar('loss', loss.item(), step)
-                writer.add_scalar('PSNR on training data', psnr_train, step)
-                writer.add_scalar('SSIM on training data', pixel_metric.item(), step)
+                writer.add_scalar('loss', loss.item(), step)  # 记录损失
+                writer.add_scalar('PSNR on training data', psnr_train, step)  # 记录训练PSNR
+                writer.add_scalar('SSIM on training data', pixel_metric.item(), step)  # 记录训练SSIM
+            step += 1  # 总步数+1
+        ## -------------------------- 8.2 单epoch训练结束 --------------------------
 
-            step += 1
-        ## epoch training end
-        workbook.save('output.xlsx')#这个是保存了一堆训练数据的工作簿，删不删呢
-        # log the images
+        # -------------------------- 8.3 记录当前epoch的图像结果（TensorBoard） --------------------------
         model.eval()
-        out_train, _ = model(input_train)
-        out_train = torch.clamp(out_train, 0., 1.)
-        im_target = utils.make_grid(target_train.data, nrow=8, normalize=True, scale_each=True)
-        im_input = utils.make_grid(input_train.data, nrow=8, normalize=True, scale_each=True)
-        im_derain = utils.make_grid(out_train.data, nrow=8, normalize=True, scale_each=True)
+        with torch.no_grad():
+            # 用当前epoch最后一个batch的数据生成图像日志
+            out_train, _ = model(input_train)
+            out_train = torch.clamp(out_train, 0., 1.)  # 限制像素值范围
+            # 转换为网格图像（nrow=8：每行显示8张图，normalize=True：归一化像素值）
+            im_target = utils.make_grid(target_train.data, nrow=8, normalize=True, scale_each=True)  # 干净图（GT）
+            im_input = utils.make_grid(input_train.data, nrow=8, normalize=True, scale_each=True)    # 雨图（输入）
+            im_derain = utils.make_grid(out_train.data, nrow=8, normalize=True, scale_each=True)     # 去雨图（输出）
+            # 记录图像到TensorBoard
+            writer.add_image('clean image (GT)', im_target, epoch+1)
+            writer.add_image('rainy image (input)', im_input, epoch+1)
+            writer.add_image('deraining image (output)', im_derain, epoch+1)
 
-        writer.add_image('clean image', im_target, epoch+1)
-        writer.add_image('rainy image', im_input, epoch+1)
-        writer.add_image('deraining image', im_derain, epoch+1)
-
-        # save model
-        torch.save(model.state_dict(), os.path.join(opt.save_path, 'net_latest.pth'))
+        # -------------------------- 8.4 保存模型 --------------------------
+        # 保存最新模型（覆盖式，方便中断后快速恢复）
+        torch.save(
+            {
+                'epoch': epoch,  # 当前epoch
+                'state_dict': model.state_dict(),  # 模型参数
+                'optimizer': optimizer.state_dict(),  # 优化器参数
+                'scheduler': scheduler.state_dict()  # 调度器参数
+            },
+            os.path.join(opt.save_path, 'net_latest.pth')
+        )
+        # 按配置频率保存epoch模型（如每5个epoch保存一次，避免频繁存储）
         if epoch % opt.save_freq == 0:
-            torch.save(model.state_dict(), os.path.join(opt.save_path, 'net_epoch%d.pth' % (epoch+1)))
+            torch.save(
+                {
+                    'epoch': epoch,
+                    'state_dict': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'scheduler': scheduler.state_dict()
+                },
+                os.path.join(opt.save_path, 'net_epoch%d.pth' % (epoch+1))
+            )
+        # -------------------------- 8.5 计算并打印当前epoch的平均指标 --------------------------
+        SSIM_average = sum(SSIM_list) / len(SSIM_list)  # 平均SSIM
+        psnr_average = sum(psnr_list) / len(psnr_list)  # 平均PSNR
+        print("[epoch %d], average SSIM: %.4f, average PSNR: %.4f" %
+              (epoch + 1, SSIM_average, psnr_average))
+        # 清空指标列表，准备下一个epoch
+        SSIM_list.clear()
+        psnr_list.clear()
+# 主函数入口
+if __name__ == "__main__":
+    main()
 
 ```
 上边是训练代码的主函数，包含了损失函数、训练循环次数、断点训练等相关内容
@@ -239,7 +328,7 @@ math
 输入以下代码进行训练：
 
 ```
-python train_PReNet.py_
+python train_M2PN.py
 ```
 
 ## 3.3测试结果
@@ -259,7 +348,7 @@ parser.add_argument("--save_path", type=str, default="./results", help='path to 
 | <img src="有雨图像.png" width="321" alt="有雨图像"> | <img src="去雨后的图像.png" width="321" alt="去雨后的结果图像"> |
 
 
-# 4论文公式对应的代码添加注释
+# 4论文公式对应的代码
 
 `LM2PN.py`代码文件中包含的公式及对应的代码
 ```
