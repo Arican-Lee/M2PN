@@ -23,12 +23,10 @@ This repository is the official PyTorch implementation of M2PN: Image Restoratio
 
 Used training and testing sets can be downloaded as follows:
 
-|Lightweight Multi-domain Multi-attention Progressive Network for Single Image Deraining | 1 | 2 | 3 | 4 | 5 |
-| ----------------------------------------------------------------------------------- |
+| Lightweight Multi-domain Multi-attention Progressive Network for Single Image Deraining | 1 | 2 | 3 | 4 | 5 |
+| :--- | :---: | :---: | :---: | :---: | :---: |
 | Training Set | Rain100L | Rain100H | Rain200L | Rain200H | Rain12600 |
-| Testing Set | Rain100L | Rain100H | Rain200L | Rain200H | Rain1400|
-
-
+| Testing Set | Rain100L | Rain100H | Rain200L | Rain200H | Rain1400 |
 
 The testing code is at [KAIR](https://github.com/Arican-Lee/M2PN/blob/main/test_M2PN.py).
 
